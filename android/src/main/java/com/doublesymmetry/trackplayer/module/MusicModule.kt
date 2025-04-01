@@ -253,22 +253,24 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
     @ReactMethod
     fun updateOptions(data: ReadableMap?, callback: Promise) {
         if (verifyServiceBoundOrReject(callback)) return
-
+        
         scope.launch {
-            val options = Arguments.toBundle(data)
-
-            options?.let {
-                musicService.updateOptions(it)
+            try {
+                val options = Arguments.toBundle(data)
+                options?.let {
+                    musicService.updateOptions(it)
+                }
+                callback.resolve(null)
+            } catch (e: Exception) {
+                callback.reject("update_options_error", e.message)
             }
-
-            callback.resolve(null)
         }
     }
 
     @ReactMethod
     fun add(data: ReadableArray?, insertBeforeIndex: Int, callback: Promise) {
         if (verifyServiceBoundOrReject(callback)) return
-
+        
         scope.launch {
             try {
                 val tracks = readableArrayToTrackList(data);
@@ -293,16 +295,20 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
         if (verifyServiceBoundOrReject(callback)) return
         
         scope.launch {
-            if (data == null) {
-                callback.resolve(null)
-                return@launch
-            }
-            val bundle = Arguments.toBundle(data);
-            if (bundle is Bundle) {
-                musicService.load(bundleToTrack(bundle))
-                callback.resolve(null)
-            } else {
-                callback.reject("invalid_track_object", "Track was not a dictionary type")
+            try {
+                if (data == null) {
+                    callback.resolve(null)
+                    return@launch
+                }
+                val bundle = Arguments.toBundle(data);
+                if (bundle is Bundle) {
+                    musicService.load(bundleToTrack(bundle))
+                    callback.resolve(null)
+                } else {
+                    callback.reject("invalid_track_object", "Track was not a dictionary type")
+                }
+            } catch (e: Exception) {
+                callback.reject("load_error", e.message)
             }
         }
     }
@@ -312,8 +318,12 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
         if (verifyServiceBoundOrReject(callback)) return
         
         scope.launch {
-            musicService.move(fromIndex, toIndex)
-            callback.resolve(null)
+            try {
+                musicService.move(fromIndex, toIndex)
+                callback.resolve(null)
+            } catch (e: Exception) {
+                callback.reject("move_error", e.message)
+            }
         }
     }
 
@@ -322,24 +332,28 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
         if (verifyServiceBoundOrReject(callback)) return
         
         scope.launch {
-            val inputIndexes = Arguments.toList(data)
-            if (inputIndexes != null) {
-                val size = musicService.tracks.size
-                val indexes: ArrayList<Int> = ArrayList();
-                for (inputIndex in inputIndexes) {
-                    val index = if (inputIndex is Int) inputIndex else inputIndex.toString().toInt()
-                    if (index < 0 || index >= size) {
-                        callback.reject(
-                            "index_out_of_bounds",
-                            "One or more indexes was out of bounds"
-                        )
-                        return@launch
+            try {
+                val inputIndexes = Arguments.toList(data)
+                if (inputIndexes != null) {
+                    val size = musicService.tracks.size
+                    val indexes: ArrayList<Int> = ArrayList();
+                    for (inputIndex in inputIndexes) {
+                        val index = if (inputIndex is Int) inputIndex else inputIndex.toString().toInt()
+                        if (index < 0 || index >= size) {
+                            callback.reject(
+                                "index_out_of_bounds",
+                                "One or more indexes was out of bounds"
+                            )
+                            return@launch
+                        }
+                        indexes.add(index)
                     }
-                    indexes.add(index)
+                    musicService.remove(indexes)
                 }
-                musicService.remove(indexes)
+                callback.resolve(null)
+            } catch (e: Exception) {
+                callback.reject("remove_error", e.message)
             }
-            callback.resolve(null)
         }
     }
 
@@ -348,15 +362,18 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
         if (verifyServiceBoundOrReject(callback)) return
         
         scope.launch {
-            if (index < 0 || index >= musicService.tracks.size) {
-                callback.reject("index_out_of_bounds", "The index is out of bounds")
-            } else {
-                val context: ReactContext = context
-                val track = musicService.tracks[index]
-                track.setMetadata(context, Arguments.toBundle(map), musicService.ratingType)
-                musicService.updateMetadataForTrack(index, track)
-
-                callback.resolve(null)
+            try {
+                if (index < 0 || index >= musicService.tracks.size) {
+                    callback.reject("index_out_of_bounds", "The index is out of bounds")
+                } else {
+                    val context: ReactContext = context
+                    val track = musicService.tracks[index]
+                    track.setMetadata(context, Arguments.toBundle(map), musicService.ratingType)
+                    musicService.updateMetadataForTrack(index, track)
+                    callback.resolve(null)
+                }
+            } catch (e: Exception) {
+                callback.reject("update_metadata_error", e.message)
             }
         }
     }
@@ -366,16 +383,22 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
         if (verifyServiceBoundOrReject(callback)) return
         
         scope.launch {
-            if (musicService.tracks.isEmpty())
-                callback.reject("no_current_item", "There is no current item in the player")
+            try {
+                if (musicService.tracks.isEmpty()) {
+                    callback.reject("no_current_item", "There is no current item in the player")
+                    return@launch
+                }
 
-            val context: ReactContext = context
-            Arguments.toBundle(map)?.let {
-                val track = bundleToTrack(it)
-                musicService.updateNowPlayingMetadata(track)
+                val context: ReactContext = context
+                Arguments.toBundle(map)?.let {
+                    val track = bundleToTrack(it)
+                    musicService.updateNowPlayingMetadata(track)
+                }
+
+                callback.resolve(null)
+            } catch (e: Exception) {
+                callback.reject("update_now_playing_metadata_error", e.message)
             }
-
-            callback.resolve(null)
         }
     }
 
@@ -384,11 +407,17 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
         if (verifyServiceBoundOrReject(callback)) return
         
         scope.launch {
-            if (musicService.tracks.isEmpty())
-                callback.reject("no_current_item", "There is no current item in the player")
+            try {
+                if (musicService.tracks.isEmpty()) {
+                    callback.reject("no_current_item", "There is no current item in the player")
+                    return@launch
+                }
 
-            musicService.clearNotificationMetadata()
-            callback.resolve(null)
+                musicService.clearNotificationMetadata()
+                callback.resolve(null)
+            } catch (e: Exception) {
+                callback.reject("clear_now_playing_metadata_error", e.message)
+            }
         }
     }
 
@@ -397,8 +426,12 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
         if (verifyServiceBoundOrReject(callback)) return
         
         scope.launch {
-            musicService.removeUpcomingTracks()
-            callback.resolve(null)
+            try {
+                musicService.removeUpcomingTracks()
+                callback.resolve(null)
+            } catch (e: Exception) {
+                callback.reject("remove_upcoming_tracks_error", e.message)
+            }
         }
     }
 
@@ -407,13 +440,17 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
         if (verifyServiceBoundOrReject(callback)) return
         
         scope.launch {
-            musicService.skip(index)
+            try {
+                musicService.skip(index)
 
-            if (initialTime >= 0) {
-                musicService.seekTo(initialTime)
+                if (initialTime >= 0) {
+                    musicService.seekTo(initialTime)
+                }
+
+                callback.resolve(null)
+            } catch (e: Exception) {
+                callback.reject("skip_error", e.message)
             }
-
-            callback.resolve(null)
         }
     }
 
@@ -422,13 +459,17 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
         if (verifyServiceBoundOrReject(callback)) return
         
         scope.launch {
-            musicService.skipToNext()
+            try {
+                musicService.skipToNext()
 
-            if (initialTime >= 0) {
-                musicService.seekTo(initialTime)
+                if (initialTime >= 0) {
+                    musicService.seekTo(initialTime)
+                }
+
+                callback.resolve(null)
+            } catch (e: Exception) {
+                callback.reject("skip_to_next_error", e.message)
             }
-
-            callback.resolve(null)
         }
     }
 
@@ -437,13 +478,17 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
         if (verifyServiceBoundOrReject(callback)) return
         
         scope.launch {
-            musicService.skipToPrevious()
+            try {
+                musicService.skipToPrevious()
 
-            if (initialTime >= 0) {
-                musicService.seekTo(initialTime)
+                if (initialTime >= 0) {
+                    musicService.seekTo(initialTime)
+                }
+
+                callback.resolve(null)
+            } catch (e: Exception) {
+                callback.reject("skip_to_previous_error", e.message)
             }
-
-            callback.resolve(null)
         }
     }
 
@@ -452,11 +497,15 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
         if (verifyServiceBoundOrReject(callback)) return
         
         scope.launch {
-            musicService.stop()
-            delay(300) // Allow playback to stop
-            musicService.clear()
+            try {
+                musicService.stop()
+                delay(300) // Allow playback to stop
+                musicService.clear()
 
-            callback.resolve(null)
+                callback.resolve(null)
+            } catch (e: Exception) {
+                callback.reject("reset_error", e.message)
+            }
         }
     }
 
@@ -465,8 +514,12 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
         if (verifyServiceBoundOrReject(callback)) return
         
         scope.launch {
-            musicService.play()
-            callback.resolve(null)
+            try {
+                musicService.play()
+                callback.resolve(null)
+            } catch (e: Exception) {
+                callback.reject("play_error", e.message)
+            }
         }
     }
 
@@ -475,8 +528,12 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
         if (verifyServiceBoundOrReject(callback)) return
         
         scope.launch {
-            musicService.pause()
-            callback.resolve(null)
+            try {
+                musicService.pause()
+                callback.resolve(null)
+            } catch (e: Exception) {
+                callback.reject("pause_error", e.message)
+            }
         }
     }
 
@@ -485,8 +542,12 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
         if (verifyServiceBoundOrReject(callback)) return
         
         scope.launch {
-            musicService.stop()
-            callback.resolve(null)
+            try {
+                musicService.stop()
+                callback.resolve(null)
+            } catch (e: Exception) {
+                callback.reject("stop_error", e.message)
+            }
         }
     }
 
@@ -495,8 +556,12 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
         if (verifyServiceBoundOrReject(callback)) return
         
         scope.launch {
-            musicService.seekTo(seconds)
-            callback.resolve(null)
+            try {
+                musicService.seekTo(seconds)
+                callback.resolve(null)
+            } catch (e: Exception) {
+                callback.reject("seek_to_error", e.message)
+            }
         }
     }
 
@@ -505,8 +570,12 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
         if (verifyServiceBoundOrReject(callback)) return
         
         scope.launch {
-            musicService.seekBy(offset)
-            callback.resolve(null)
+            try {
+                musicService.seekBy(offset)
+                callback.resolve(null)
+            } catch (e: Exception) {
+                callback.reject("seek_by_error", e.message)
+            }
         }
     }
 
@@ -515,8 +584,12 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
         if (verifyServiceBoundOrReject(callback)) return
         
         scope.launch {
-            musicService.retry()
-            callback.resolve(null)
+            try {
+                musicService.retry()
+                callback.resolve(null)
+            } catch (e: Exception) {
+                callback.reject("retry_error", e.message)
+            }
         }
     }
 
@@ -525,8 +598,12 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
         if (verifyServiceBoundOrReject(callback)) return
         
         scope.launch {
-            musicService.setVolume(volume)
-            callback.resolve(null)
+            try {
+                musicService.setVolume(volume)
+                callback.resolve(null)
+            } catch (e: Exception) {
+                callback.reject("set_volume_error", e.message)
+            }
         }
     }
 
@@ -535,7 +612,11 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
         if (verifyServiceBoundOrReject(callback)) return
         
         scope.launch {
-            callback.resolve(musicService.getVolume())
+            try {
+                callback.resolve(musicService.getVolume())
+            } catch (e: Exception) {
+                callback.reject("get_volume_error", e.message)
+            }
         }
     }
 
@@ -544,8 +625,12 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
         if (verifyServiceBoundOrReject(callback)) return
         
         scope.launch {
-            musicService.setRate(rate)
-            callback.resolve(null)
+            try {
+                musicService.setRate(rate)
+                callback.resolve(null)
+            } catch (e: Exception) {
+                callback.reject("set_rate_error", e.message)
+            }
         }
     }
 
@@ -554,7 +639,11 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
         if (verifyServiceBoundOrReject(callback)) return
         
         scope.launch {
-            callback.resolve(musicService.getRate())
+            try {
+                callback.resolve(musicService.getRate())
+            } catch (e: Exception) {
+                callback.reject("get_rate_error", e.message)
+            }
         }
     }
 
@@ -563,8 +652,12 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
         if (verifyServiceBoundOrReject(callback)) return
         
         scope.launch {
-            musicService.setRepeatMode(RepeatMode.fromOrdinal(mode))
-            callback.resolve(null)
+            try {
+                musicService.setRepeatMode(RepeatMode.fromOrdinal(mode))
+                callback.resolve(null)
+            } catch (e: Exception) {
+                callback.reject("set_repeat_mode_error", e.message)
+            }
         }
     }
 
@@ -573,7 +666,11 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
         if (verifyServiceBoundOrReject(callback)) return
         
         scope.launch {
-            callback.resolve(musicService.getRepeatMode().ordinal)
+            try {
+                callback.resolve(musicService.getRepeatMode().ordinal)
+            } catch (e: Exception) {
+                callback.reject("get_repeat_mode_error", e.message)
+            }
         }
     }
 
@@ -582,8 +679,12 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
         if (verifyServiceBoundOrReject(callback)) return
         
         scope.launch {
-            musicService.playWhenReady = playWhenReady
-            callback.resolve(null)
+            try {
+                musicService.playWhenReady = playWhenReady
+                callback.resolve(null)
+            } catch (e: Exception) {
+                callback.reject("set_play_when_ready_error", e.message)
+            }
         }
     }
 
@@ -592,7 +693,11 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
         if (verifyServiceBoundOrReject(callback)) return
         
         scope.launch {
-            callback.resolve(musicService.playWhenReady)
+            try {
+                callback.resolve(musicService.playWhenReady)
+            } catch (e: Exception) {
+                callback.reject("get_play_when_ready_error", e.message)
+            }
         }
     }
 
@@ -601,10 +706,14 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
         if (verifyServiceBoundOrReject(callback)) return
         
         scope.launch {
-            if (index >= 0 && index < musicService.tracks.size) {
-                callback.resolve(Arguments.fromBundle(musicService.tracks[index].originalItem))
-            } else {
-                callback.resolve(null)
+            try {
+                if (index >= 0 && index < musicService.tracks.size) {
+                    callback.resolve(Arguments.fromBundle(musicService.tracks[index].originalItem))
+                } else {
+                    callback.resolve(null)
+                }
+            } catch (e: Exception) {
+                callback.reject("get_track_error", e.message)
             }
         }
     }
@@ -614,7 +723,11 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
         if (verifyServiceBoundOrReject(callback)) return
         
         scope.launch {
-            callback.resolve(Arguments.fromList(musicService.tracks.map { it.originalItem }))
+            try {
+                callback.resolve(Arguments.fromList(musicService.tracks.map { it.originalItem }))
+            } catch (e: Exception) {
+                callback.reject("get_queue_error", e.message)
+            }
         }
     }
 
@@ -638,9 +751,13 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
         if (verifyServiceBoundOrReject(callback)) return
         
         scope.launch {
-            callback.resolve(
-                if (musicService.tracks.isEmpty()) null else musicService.getCurrentTrackIndex()
-            )
+            try {
+                callback.resolve(
+                    if (musicService.tracks.isEmpty()) null else musicService.getCurrentTrackIndex()
+                )
+            } catch (e: Exception) {
+                callback.reject("get_active_track_index_error", e.message)
+            }
         }
     }
 
@@ -649,12 +766,16 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
         if (verifyServiceBoundOrReject(callback)) return
         
         scope.launch {
-            callback.resolve(
-                if (musicService.tracks.isEmpty()) null
-                else Arguments.fromBundle(
-                    musicService.tracks[musicService.getCurrentTrackIndex()].originalItem
+            try {
+                callback.resolve(
+                    if (musicService.tracks.isEmpty()) null
+                    else Arguments.fromBundle(
+                        musicService.tracks[musicService.getCurrentTrackIndex()].originalItem
+                    )
                 )
-            )
+            } catch (e: Exception) {
+                callback.reject("get_active_track_error", e.message)
+            }
         }
     }
 
@@ -663,7 +784,11 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
         if (verifyServiceBoundOrReject(callback)) return
         
         scope.launch {
-            callback.resolve(musicService.getDurationInSeconds())
+            try {
+                callback.resolve(musicService.getDurationInSeconds())
+            } catch (e: Exception) {
+                callback.reject("get_duration_error", e.message)
+            }
         }
     }
 
@@ -672,7 +797,11 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
         if (verifyServiceBoundOrReject(callback)) return
         
         scope.launch {
-            callback.resolve(musicService.getBufferedPositionInSeconds())
+            try {
+                callback.resolve(musicService.getBufferedPositionInSeconds())
+            } catch (e: Exception) {
+                callback.reject("get_buffered_position_error", e.message)
+            }
         }
     }
 
@@ -681,7 +810,11 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
         if (verifyServiceBoundOrReject(callback)) return
         
         scope.launch {
-            callback.resolve(musicService.getPositionInSeconds())
+            try {
+                callback.resolve(musicService.getPositionInSeconds())
+            } catch (e: Exception) {
+                callback.reject("get_position_error", e.message)
+            }
         }
     }
 
@@ -690,11 +823,15 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
         if (verifyServiceBoundOrReject(callback)) return
         
         scope.launch {
-            var bundle = Bundle()
-            bundle.putDouble("duration", musicService.getDurationInSeconds());
-            bundle.putDouble("position", musicService.getPositionInSeconds());
-            bundle.putDouble("buffered", musicService.getBufferedPositionInSeconds());
-            callback.resolve(Arguments.fromBundle(bundle))
+            try {
+                var bundle = Bundle()
+                bundle.putDouble("duration", musicService.getDurationInSeconds());
+                bundle.putDouble("position", musicService.getPositionInSeconds());
+                bundle.putDouble("buffered", musicService.getBufferedPositionInSeconds());
+                callback.resolve(Arguments.fromBundle(bundle))
+            } catch (e: Exception) {
+                callback.reject("get_progress_error", e.message)
+            }
         }
     }
 
@@ -703,7 +840,11 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
         if (verifyServiceBoundOrReject(callback)) return
         
         scope.launch {
-            callback.resolve(Arguments.fromBundle(musicService.getPlayerStateBundle(musicService.state)))
+            try {
+                callback.resolve(Arguments.fromBundle(musicService.getPlayerStateBundle(musicService.state)))
+            } catch (e: Exception) {
+                callback.reject("get_playback_state_error", e.message)
+            }
         }
     }
 }
