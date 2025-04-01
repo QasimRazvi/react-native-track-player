@@ -3,7 +3,9 @@ package com.doublesymmetry.trackplayer.module
 import android.content.*
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.support.v4.media.RatingCompat
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import com.doublesymmetry.kotlinaudio.models.Capability
@@ -23,7 +25,6 @@ import kotlinx.coroutines.launch
 import timber.log.Timber
 import java.util.*
 import java.util.concurrent.Executors
-import java.util.concurrent.ThreadPoolExecutor
 import javax.annotation.Nonnull
 
 /**
@@ -39,8 +40,11 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
     private lateinit var musicService: MusicService
     private val context = reactContext
     
-    // Use ThreadPoolExecutor for async operations that won't block the TurboModule interface
-    private val threadPool: ThreadPoolExecutor = Executors.newCachedThreadPool() as ThreadPoolExecutor
+    // Main thread handler for player operations
+    private val mainHandler = Handler(Looper.getMainLooper())
+    
+    // Use an executor for non-player operations
+    private val executor = Executors.newCachedThreadPool()
 
     @Nonnull
     override fun getName(): String {
@@ -258,13 +262,19 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
     fun updateOptions(data: ReadableMap?, callback: Promise) {
         if (verifyServiceBoundOrReject(callback)) return
 
-        threadPool.execute {
+        executor.execute {
             try {
                 val options = Arguments.toBundle(data)
-                options?.let {
-                    musicService.updateOptions(it)
+                mainHandler.post {
+                    try {
+                        options?.let {
+                            musicService.updateOptions(it)
+                        }
+                        callback.resolve(null)
+                    } catch (e: Exception) {
+                        callback.reject("update_options_error", e.message)
+                    }
                 }
-                callback.resolve(null)
             } catch (e: Exception) {
                 callback.reject("update_options_error", e.message)
             }
@@ -275,19 +285,26 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
     fun add(data: ReadableArray?, insertBeforeIndex: Int, callback: Promise) {
         if (verifyServiceBoundOrReject(callback)) return
 
-        threadPool.execute {
+        executor.execute {
             try {
-                val tracks = readableArrayToTrackList(data);
+                val tracks = readableArrayToTrackList(data)
                 if (insertBeforeIndex < -1 || insertBeforeIndex > musicService.tracks.size) {
                     callback.reject("index_out_of_bounds", "The track index is out of bounds")
                     return@execute
                 }
                 val index = if (insertBeforeIndex == -1) musicService.tracks.size else insertBeforeIndex
-                musicService.add(
-                    tracks,
-                    index
-                )
-                callback.resolve(index)
+                
+                mainHandler.post {
+                    try {
+                        musicService.add(
+                            tracks,
+                            index
+                        )
+                        callback.resolve(index)
+                    } catch (exception: Exception) {
+                        rejectWithException(callback, exception)
+                    }
+                }
             } catch (exception: Exception) {
                 rejectWithException(callback, exception)
             }
@@ -298,16 +315,23 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
     fun load(data: ReadableMap?, callback: Promise) {
         if (verifyServiceBoundOrReject(callback)) return
         
-        threadPool.execute {
+        executor.execute {
             try {
                 if (data == null) {
                     callback.resolve(null)
                     return@execute
                 }
-                val bundle = Arguments.toBundle(data);
+                val bundle = Arguments.toBundle(data)
                 if (bundle is Bundle) {
-                    musicService.load(bundleToTrack(bundle))
-                    callback.resolve(null)
+                    val track = bundleToTrack(bundle)
+                    mainHandler.post {
+                        try {
+                            musicService.load(track)
+                            callback.resolve(null)
+                        } catch (e: Exception) {
+                            callback.reject("load_error", e.message)
+                        }
+                    }
                 } else {
                     callback.reject("invalid_track_object", "Track was not a dictionary type")
                 }
@@ -321,7 +345,7 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
     fun move(fromIndex: Int, toIndex: Int, callback: Promise) {
         if (verifyServiceBoundOrReject(callback)) return
         
-        threadPool.execute {
+        mainHandler.post {
             try {
                 musicService.move(fromIndex, toIndex)
                 callback.resolve(null)
@@ -335,12 +359,12 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
     fun remove(data: ReadableArray?, callback: Promise) {
         if (verifyServiceBoundOrReject(callback)) return
         
-        threadPool.execute {
+        executor.execute {
             try {
                 val inputIndexes = Arguments.toList(data)
                 if (inputIndexes != null) {
                     val size = musicService.tracks.size
-                    val indexes: ArrayList<Int> = ArrayList();
+                    val indexes: ArrayList<Int> = ArrayList()
                     for (inputIndex in inputIndexes) {
                         val index = if (inputIndex is Int) inputIndex else inputIndex.toString().toInt()
                         if (index < 0 || index >= size) {
@@ -352,9 +376,18 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
                         }
                         indexes.add(index)
                     }
-                    musicService.remove(indexes)
+                    
+                    mainHandler.post {
+                        try {
+                            musicService.remove(indexes)
+                            callback.resolve(null)
+                        } catch (e: Exception) {
+                            callback.reject("remove_error", e.message)
+                        }
+                    }
+                } else {
+                    callback.resolve(null)
                 }
-                callback.resolve(null)
             } catch (e: Exception) {
                 callback.reject("remove_error", e.message)
             }
@@ -365,16 +398,23 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
     fun updateMetadataForTrack(index: Int, map: ReadableMap?, callback: Promise) {
         if (verifyServiceBoundOrReject(callback)) return
         
-        threadPool.execute {
+        executor.execute {
             try {
                 if (index < 0 || index >= musicService.tracks.size) {
                     callback.reject("index_out_of_bounds", "The index is out of bounds")
                 } else {
-                    val context: ReactContext = context
+                    val reactContext: ReactContext = context
                     val track = musicService.tracks[index]
-                    track.setMetadata(context, Arguments.toBundle(map), musicService.ratingType)
-                    musicService.updateMetadataForTrack(index, track)
-                    callback.resolve(null)
+                    track.setMetadata(reactContext, Arguments.toBundle(map), musicService.ratingType)
+                    
+                    mainHandler.post {
+                        try {
+                            musicService.updateMetadataForTrack(index, track)
+                            callback.resolve(null)
+                        } catch (e: Exception) {
+                            callback.reject("update_metadata_error", e.message)
+                        }
+                    }
                 }
             } catch (e: Exception) {
                 callback.reject("update_metadata_error", e.message)
@@ -386,20 +426,29 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
     fun updateNowPlayingMetadata(map: ReadableMap?, callback: Promise) {
         if (verifyServiceBoundOrReject(callback)) return
         
-        threadPool.execute {
+        executor.execute {
             try {
                 if (musicService.tracks.isEmpty()) {
                     callback.reject("no_current_item", "There is no current item in the player")
                     return@execute
                 }
 
-                val context: ReactContext = context
-                Arguments.toBundle(map)?.let {
-                    val track = bundleToTrack(it)
-                    musicService.updateNowPlayingMetadata(track)
+                val reactContext: ReactContext = context
+                val bundle = Arguments.toBundle(map)
+                if (bundle != null) {
+                    val track = bundleToTrack(bundle)
+                    
+                    mainHandler.post {
+                        try {
+                            musicService.updateNowPlayingMetadata(track)
+                            callback.resolve(null)
+                        } catch (e: Exception) {
+                            callback.reject("update_now_playing_metadata_error", e.message)
+                        }
+                    }
+                } else {
+                    callback.resolve(null)
                 }
-
-                callback.resolve(null)
             } catch (e: Exception) {
                 callback.reject("update_now_playing_metadata_error", e.message)
             }
@@ -410,15 +459,21 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
     fun clearNowPlayingMetadata(callback: Promise) {
         if (verifyServiceBoundOrReject(callback)) return
         
-        threadPool.execute {
+        executor.execute {
             try {
                 if (musicService.tracks.isEmpty()) {
                     callback.reject("no_current_item", "There is no current item in the player")
                     return@execute
                 }
 
-                musicService.clearNotificationMetadata()
-                callback.resolve(null)
+                mainHandler.post {
+                    try {
+                        musicService.clearNotificationMetadata()
+                        callback.resolve(null)
+                    } catch (e: Exception) {
+                        callback.reject("clear_now_playing_metadata_error", e.message)
+                    }
+                }
             } catch (e: Exception) {
                 callback.reject("clear_now_playing_metadata_error", e.message)
             }
@@ -429,7 +484,7 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
     fun removeUpcomingTracks(callback: Promise) {
         if (verifyServiceBoundOrReject(callback)) return
         
-        threadPool.execute {
+        mainHandler.post {
             try {
                 musicService.removeUpcomingTracks()
                 callback.resolve(null)
@@ -443,7 +498,7 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
     fun skip(index: Int, initialTime: Float, callback: Promise) {
         if (verifyServiceBoundOrReject(callback)) return
         
-        threadPool.execute {
+        mainHandler.post {
             try {
                 musicService.skip(index)
 
@@ -462,7 +517,7 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
     fun skipToNext(initialTime: Float, callback: Promise) {
         if (verifyServiceBoundOrReject(callback)) return
         
-        threadPool.execute {
+        mainHandler.post {
             try {
                 musicService.skipToNext()
 
@@ -481,7 +536,7 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
     fun skipToPrevious(initialTime: Float, callback: Promise) {
         if (verifyServiceBoundOrReject(callback)) return
         
-        threadPool.execute {
+        mainHandler.post {
             try {
                 musicService.skipToPrevious()
 
@@ -500,7 +555,7 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
     fun reset(callback: Promise) {
         if (verifyServiceBoundOrReject(callback)) return
         
-        threadPool.execute {
+        mainHandler.post {
             try {
                 musicService.stop()
                 Thread.sleep(300) // Allow playback to stop
@@ -517,7 +572,7 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
     fun play(callback: Promise) {
         if (verifyServiceBoundOrReject(callback)) return
         
-        threadPool.execute {
+        mainHandler.post {
             try {
                 musicService.play()
                 callback.resolve(null)
@@ -531,7 +586,7 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
     fun pause(callback: Promise) {
         if (verifyServiceBoundOrReject(callback)) return
         
-        threadPool.execute {
+        mainHandler.post {
             try {
                 musicService.pause()
                 callback.resolve(null)
@@ -545,7 +600,7 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
     fun stop(callback: Promise) {
         if (verifyServiceBoundOrReject(callback)) return
         
-        threadPool.execute {
+        mainHandler.post {
             try {
                 musicService.stop()
                 callback.resolve(null)
@@ -559,7 +614,7 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
     fun seekTo(seconds: Float, callback: Promise) {
         if (verifyServiceBoundOrReject(callback)) return
         
-        threadPool.execute {
+        mainHandler.post {
             try {
                 musicService.seekTo(seconds)
                 callback.resolve(null)
@@ -573,7 +628,7 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
     fun seekBy(offset: Float, callback: Promise) {
         if (verifyServiceBoundOrReject(callback)) return
         
-        threadPool.execute {
+        mainHandler.post {
             try {
                 musicService.seekBy(offset)
                 callback.resolve(null)
@@ -587,7 +642,7 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
     fun retry(callback: Promise) {
         if (verifyServiceBoundOrReject(callback)) return
         
-        threadPool.execute {
+        mainHandler.post {
             try {
                 musicService.retry()
                 callback.resolve(null)
@@ -601,7 +656,7 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
     fun setVolume(volume: Float, callback: Promise) {
         if (verifyServiceBoundOrReject(callback)) return
         
-        threadPool.execute {
+        mainHandler.post {
             try {
                 musicService.setVolume(volume)
                 callback.resolve(null)
@@ -615,7 +670,7 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
     fun getVolume(callback: Promise) {
         if (verifyServiceBoundOrReject(callback)) return
         
-        threadPool.execute {
+        mainHandler.post {
             try {
                 callback.resolve(musicService.getVolume())
             } catch (e: Exception) {
@@ -628,7 +683,7 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
     fun setRate(rate: Float, callback: Promise) {
         if (verifyServiceBoundOrReject(callback)) return
         
-        threadPool.execute {
+        mainHandler.post {
             try {
                 musicService.setRate(rate)
                 callback.resolve(null)
@@ -642,7 +697,7 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
     fun getRate(callback: Promise) {
         if (verifyServiceBoundOrReject(callback)) return
         
-        threadPool.execute {
+        mainHandler.post {
             try {
                 callback.resolve(musicService.getRate())
             } catch (e: Exception) {
@@ -655,7 +710,7 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
     fun setRepeatMode(mode: Int, callback: Promise) {
         if (verifyServiceBoundOrReject(callback)) return
         
-        threadPool.execute {
+        mainHandler.post {
             try {
                 musicService.setRepeatMode(RepeatMode.fromOrdinal(mode))
                 callback.resolve(null)
@@ -669,7 +724,7 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
     fun getRepeatMode(callback: Promise) {
         if (verifyServiceBoundOrReject(callback)) return
         
-        threadPool.execute {
+        mainHandler.post {
             try {
                 callback.resolve(musicService.getRepeatMode().ordinal)
             } catch (e: Exception) {
@@ -682,7 +737,7 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
     fun setPlayWhenReady(playWhenReady: Boolean, callback: Promise) {
         if (verifyServiceBoundOrReject(callback)) return
         
-        threadPool.execute {
+        mainHandler.post {
             try {
                 musicService.playWhenReady = playWhenReady
                 callback.resolve(null)
@@ -696,7 +751,7 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
     fun getPlayWhenReady(callback: Promise) {
         if (verifyServiceBoundOrReject(callback)) return
         
-        threadPool.execute {
+        mainHandler.post {
             try {
                 callback.resolve(musicService.playWhenReady)
             } catch (e: Exception) {
@@ -709,7 +764,7 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
     fun getTrack(index: Int, callback: Promise) {
         if (verifyServiceBoundOrReject(callback)) return
         
-        threadPool.execute {
+        mainHandler.post {
             try {
                 if (index >= 0 && index < musicService.tracks.size) {
                     callback.resolve(Arguments.fromBundle(musicService.tracks[index].originalItem))
@@ -726,7 +781,7 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
     fun getQueue(callback: Promise) {
         if (verifyServiceBoundOrReject(callback)) return
         
-        threadPool.execute {
+        mainHandler.post {
             try {
                 callback.resolve(Arguments.fromList(musicService.tracks.map { it.originalItem }))
             } catch (e: Exception) {
@@ -739,11 +794,18 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
     fun setQueue(data: ReadableArray?, callback: Promise) {
         if (verifyServiceBoundOrReject(callback)) return
         
-        threadPool.execute {
+        executor.execute {
             try {
-                musicService.clear()
-                musicService.add(readableArrayToTrackList(data))
-                callback.resolve(null)
+                val tracks = readableArrayToTrackList(data)
+                mainHandler.post {
+                    try {
+                        musicService.clear()
+                        musicService.add(tracks)
+                        callback.resolve(null)
+                    } catch (exception: Exception) {
+                        rejectWithException(callback, exception)
+                    }
+                }
             } catch (exception: Exception) {
                 rejectWithException(callback, exception)
             }
@@ -754,7 +816,7 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
     fun getActiveTrackIndex(callback: Promise) {
         if (verifyServiceBoundOrReject(callback)) return
         
-        threadPool.execute {
+        mainHandler.post {
             try {
                 callback.resolve(
                     if (musicService.tracks.isEmpty()) null else musicService.getCurrentTrackIndex()
@@ -769,7 +831,7 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
     fun getActiveTrack(callback: Promise) {
         if (verifyServiceBoundOrReject(callback)) return
         
-        threadPool.execute {
+        mainHandler.post {
             try {
                 callback.resolve(
                     if (musicService.tracks.isEmpty()) null
@@ -787,7 +849,7 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
     fun getDuration(callback: Promise) {
         if (verifyServiceBoundOrReject(callback)) return
         
-        threadPool.execute {
+        mainHandler.post {
             try {
                 callback.resolve(musicService.getDurationInSeconds())
             } catch (e: Exception) {
@@ -800,7 +862,7 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
     fun getBufferedPosition(callback: Promise) {
         if (verifyServiceBoundOrReject(callback)) return
         
-        threadPool.execute {
+        mainHandler.post {
             try {
                 callback.resolve(musicService.getBufferedPositionInSeconds())
             } catch (e: Exception) {
@@ -813,7 +875,7 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
     fun getPosition(callback: Promise) {
         if (verifyServiceBoundOrReject(callback)) return
         
-        threadPool.execute {
+        mainHandler.post {
             try {
                 callback.resolve(musicService.getPositionInSeconds())
             } catch (e: Exception) {
@@ -826,7 +888,7 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
     fun getProgress(callback: Promise) {
         if (verifyServiceBoundOrReject(callback)) return
         
-        threadPool.execute {
+        mainHandler.post {
             try {
                 var bundle = Bundle()
                 bundle.putDouble("duration", musicService.getDurationInSeconds());
@@ -843,7 +905,7 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
     fun getPlaybackState(callback: Promise) {
         if (verifyServiceBoundOrReject(callback)) return
         
-        threadPool.execute {
+        mainHandler.post {
             try {
                 callback.resolve(Arguments.fromBundle(musicService.getPlayerStateBundle(musicService.state)))
             } catch (e: Exception) {
